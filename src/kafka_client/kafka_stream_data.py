@@ -1,31 +1,27 @@
-from src.constants import (
-    URL_API,
-    PATH_LAST_PROCESSED,
-    MAX_LIMIT,
-    MAX_OFFSET,
-)
-
-from .transformations import transform_row
+import datetime
+import json
+import logging
+from typing import List
 
 import kafka.errors
-import json
-import datetime
 import requests
+
 from kafka import KafkaProducer
-from typing import List
-import logging
+from src.constants import MAX_LIMIT, MAX_OFFSET, PATH_LAST_PROCESSED, URL_API
+
+from .transformations import transform_row
 
 logging.basicConfig(format="%(asctime)s - %(message)s", level=logging.INFO, force=True)
 
 
-def get_latest_timestamp():
+def get_latest_timestamp() -> datetime.datetime:
     """
     Gets the latest timestamp from the last_processed.json file
     """
     with open(PATH_LAST_PROCESSED, "r") as file:
         data = json.load(file)
         if "last_processed" in data:
-            return data["last_processed"]
+            return datetime.datetime.strptime(data["last_processed"], "%Y-%m-%dT%H:%M:%S%z")
         else:
             return datetime.datetime.min
 
@@ -36,11 +32,11 @@ def update_last_processed_file(data: List[dict]):
     on the field date_de_publication, we set the new last_processed day to the latest timestamp minus one day.
     """
     publication_dates_as_timestamps = [
-        datetime.datetime.strptime(row["date_de_publication"], "%Y-%m-%d")
+        datetime.datetime.strptime(row["date_de_publication"], "%Y-%m-%dT%H:%M:%S%z")
         for row in data
     ]
     last_processed = max(publication_dates_as_timestamps) - datetime.timedelta(days=1)
-    last_processed_as_string = last_processed.strftime("%Y-%m-%d")
+    last_processed_as_string = last_processed.strftime("%Y-%m-%dT%H:%M:%S%z")
     with open(PATH_LAST_PROCESSED, "w") as file:
         json.dump({"last_processed": last_processed_as_string}, file)
 
@@ -51,9 +47,10 @@ def get_all_data(last_processed_timestamp: datetime.datetime) -> List[dict]:
     while True:
         # The publication date must be greater than the last processed timestamp and the offset (n_results)
         # corresponds to the number of results already processed.
-        url = URL_API.format(last_processed_timestamp, n_results)
+        url = URL_API.format(last_processed_timestamp.strftime("%Y-%m-%d"), n_results)
         response = requests.get(url)
         data = response.json()
+        logging.info(f"Got data from the API:{data}")
         current_results = data["results"]
         full_data.extend(current_results)
         n_results += len(current_results)
@@ -65,7 +62,7 @@ def get_all_data(last_processed_timestamp: datetime.datetime) -> List[dict]:
             # of the last retrieved result, minus one day. In case of duplicates, they will be filtered
             # in the deduplicate_data function. We also reset n_results (or the offset parameter) to 0.
             last_timestamp = current_results[-1]["date_de_publication"]
-            timestamp_as_date = datetime.datetime.strptime(last_timestamp, "%Y-%m-%d")
+            timestamp_as_date = datetime.datetime.strptime(last_timestamp, "%Y-%m-%dT%H:%M:%S%z")
             timestamp_as_date = timestamp_as_date - datetime.timedelta(days=1)
             last_processed_timestamp = timestamp_as_date.strftime("%Y-%m-%d")
             n_results = 0
